@@ -48,18 +48,25 @@ class Encoder(nn.Module):
             nn.ReLU(),
             nn.Flatten()
         )
-        self.linear = nn.Linear((base_channels * 2) * 7 * 7, latent_dim)
+        self.model = nn.Sequential(
+            nn.Linear((base_channels * 2) * 7 * 7, latent_dim),
+            nn.Dropout(0.3),
+            nn.Linear(latent_dim, latent_dim),
+            nn.Dropout(0.3),
+            nn.Linear(latent_dim, latent_dim),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         x = self.conv(x)
-        x = self.linear(x)
+        x = self.model(x)
         return x
 
 
 class Decoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
-        self.linear = nn.Linear(latent_dim, (base_channels * 2) * 7 * 7)
+        # self.linear = nn.Linear(latent_dim, (base_channels * 2) * 7 * 7)
         self.deconv = nn.Sequential(
             nn.ReLU(),
             nn.Unflatten(1, (base_channels * 2, 7, 7)),
@@ -74,9 +81,15 @@ class Decoder(nn.Module):
             # 14x14 -> 28x28
             nn.Sigmoid()  # Normalized the output [0,1]
         )
+        self.model = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim),
+            nn.Dropout(0.3),
+            nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
-        x = self.linear(x)
+        x = self.model(x)
         x = self.deconv(x)
         return x
 
