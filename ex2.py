@@ -1,7 +1,7 @@
 # === Imports ===
 import os
 import numpy as np
-import torch
+from torch import optim
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
@@ -11,22 +11,27 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils import data as data_utils
 
-
 # === Constants and Mappings ===
 BATCH_SIZE = 32
-
-# Define the transformation to convert images to PyTorch tensors
-transform = transforms.Compose([transforms.ToTensor()])
+EPOCHS = 10
+KERNEL_SIZE = 3
+STRIDE = 2
 
 # Load the MNIST dataset with the specified transformation
-train_loader = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+transform = transforms.Compose([transforms.ToTensor()])
+train_loader = datasets.MNIST(root='./data', train=True, download=True,
+                              transform=transform)
 
-# Create a subset of the dataset for testing
-indices = torch.arange(100)
-train_loader_CLS = data_utils.Subset(train_loader, indices)
 
-# Create a DataLoader to load the dataset in batches
-train_loader_pytorch = torch.utils.data.DataLoader(train_loader_CLS, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+#
+# # Create a subset for the test
+# indices = torch.arange(100)
+# train_loader_CLS = data_utils.Subset(train_loader, indices)
+#
+# # Create a DataLoader to load the dataset in batches
+# train_loader_pytorch = torch.utils.data.DataLoader(train_loader_CLS,
+#                                                    batch_size=BATCH_SIZE,
+#                                                    shuffle=True, num_workers=0)
 
 
 # === AutoEncoder Components ===
@@ -34,9 +39,12 @@ class Encoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(1, base_channels, kernel_size=3, stride=2, padding=1),  # 28x28 -> 14x14
+            nn.Conv2d(1, base_channels, kernel_size=KERNEL_SIZE, stride=STRIDE,
+                      padding=1),  # 28x28 -> 14x14
             nn.ReLU(),
-            nn.Conv2d(base_channels, base_channels * 2, kernel_size=3, stride=2, padding=1),  # 14x14 -> 7x7
+            nn.Conv2d(base_channels, base_channels * 2,
+                      kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
+            # 14x14 -> 7x7
             nn.ReLU(),
             nn.Flatten()
         )
@@ -55,12 +63,16 @@ class Decoder(nn.Module):
         self.deconv = nn.Sequential(
             nn.ReLU(),
             nn.Unflatten(1, (base_channels * 2, 7, 7)),
-            nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ConvTranspose2d(base_channels * 2, base_channels,
+                               kernel_size=KERNEL_SIZE,
+                               stride=STRIDE, padding=1, output_padding=1),
             # 7x7 -> 14x14
             nn.ReLU(),
-            nn.ConvTranspose2d(base_channels, 1, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ConvTranspose2d(base_channels, 1, kernel_size=KERNEL_SIZE,
+                               stride=STRIDE,
+                               padding=1, output_padding=1),
             # 14x14 -> 28x28
-            nn.Sigmoid()  # Normalized output [0,1]
+            nn.Sigmoid()  # Normalized the output [0,1]
         )
 
     def forward(self, x):
@@ -86,15 +98,16 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_dim = 16  # You can change to 4 or other values
 base_channels = 4  # Or 16 for larger model
 
-model = Autoencoder(latent_dim=latent_dim, base_channels=base_channels).to(device)
+model = Autoencoder(latent_dim=latent_dim, base_channels=base_channels).to(
+    device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 criterion = nn.L1Loss()
 
 # Use full MNIST here instead of subset
-full_loader = torch.utils.data.DataLoader(train_loader, batch_size=BATCH_SIZE, shuffle=True)
+full_loader = torch.utils.data.DataLoader(train_loader, batch_size=BATCH_SIZE,
+                                          shuffle=True)
 
 # === Training Loop ===
-EPOCHS = 10
 losses = []
 
 for epoch in range(EPOCHS):
@@ -131,7 +144,7 @@ test_images = test_images.cpu().numpy()
 reconstructed = reconstructed.cpu().numpy()
 
 # Plot original and reconstructed images side-by-side
-n = 10  # number of images to show
+n = 5  # number of images to show
 plt.figure(figsize=(20, 4))
 for i in range(n):
     # Original
@@ -148,5 +161,14 @@ for i in range(n):
     if i == 0:
         ax.set_title("Reconstructed", fontsize=14)
 
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(6, 4))
+plt.plot(range(1, EPOCHS + 1), losses, marker='o')
+plt.title("Autoencoder Training Loss")
+plt.xlabel("Epoch")
+plt.ylabel("L1 Loss")
+plt.grid(True)
 plt.tight_layout()
 plt.show()
