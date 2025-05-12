@@ -13,32 +13,32 @@ from torch.utils import data as data_utils
 
 # === Constants and Mappings ===
 BATCH_SIZE = 32
-EPOCHS = 10
+EPOCHS = 20
 KERNEL_SIZE = 3
 STRIDE = 2
+NUM_SAMPLES = 100
 
 # Load the MNIST dataset with the specified transformation
 transform = transforms.Compose([transforms.ToTensor()])
 train_loader = datasets.MNIST(root='./data', train=True, download=True,
                               transform=transform)
 
+# === Added for NUM_SAMPLES-sample training ===
+# Select NUM_SAMPLES random indices from the full dataset
+subset_indices = torch.randperm(len(train_loader))[:NUM_SAMPLES]
+train_loader_100 = data_utils.Subset(train_loader, subset_indices)
 
-#
-# # Create a subset for the test
-# indices = torch.arange(100)
-# train_loader_CLS = data_utils.Subset(train_loader, indices)
-#
-# # Create a DataLoader to load the dataset in batches
-# train_loader_pytorch = torch.utils.data.DataLoader(train_loader_CLS,
-#                                                    batch_size=BATCH_SIZE,
-#                                                    shuffle=True, num_workers=0)
+# Create DataLoaders for both full and subset
+loader_full = torch.utils.data.DataLoader(train_loader, batch_size=BATCH_SIZE,
+                                          shuffle=True)
+loader_100 = torch.utils.data.DataLoader(train_loader_100, batch_size=BATCH_SIZE,
+                                         shuffle=True)
 
 # === Preprocessing Functions ===
 def encode_label(label):
     one_hot = np.zeros((1, 10), dtype=np.float32)
     one_hot[0, label] = 1.0
-    return one_hot.flatten()
-
+    return torch.tensor(one_hot.flatten())
 
 # === AutoEncoder Components ===
 class Encoder(nn.Module):
@@ -70,9 +70,11 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
-        # self.linear = nn.Linear(latent_dim, (base_channels * 2) * 7 * 7)
+        self.model = nn.Sequential(
+            nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
+            nn.ReLU()
+        )
         self.deconv = nn.Sequential(
-            nn.ReLU(),
             nn.Unflatten(1, (base_channels * 2, 7, 7)),
             nn.ConvTranspose2d(base_channels * 2, base_channels,
                                kernel_size=KERNEL_SIZE,
@@ -85,12 +87,6 @@ class Decoder(nn.Module):
             # 14x14 -> 28x28
             nn.Sigmoid()  # Normalized the output [0,1]
         )
-        # self.model = nn.Sequential(
-        #     nn.Linear(latent_dim, latent_dim),
-        #     nn.Dropout(0.3),
-        #     nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
-        #     nn.Sigmoid()
-        # )
 
     def forward(self, x):
         x = self.model(x)
@@ -127,91 +123,83 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_dim = 16  # You can change to 4 or other values
 base_channels = 4  # Or 16 for larger model
 
-model = Classifier(latent_dim, base_channels)
+# === Training function to support both loaders ===
+def train_classifier(model, loader, name=""):
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    criterion = nn.CrossEntropyLoss(reduction='sum')  # Sum the loss over the batch
+    model = model.to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-criterion = nn.CrossEntropyLoss()
+    losses = []
 
-# Use full MNIST here instead of subset
-full_loader = torch.utils.data.DataLoader(train_loader, batch_size=BATCH_SIZE,
-                                          shuffle=True)
+    for epoch in range(EPOCHS):
+        model.train()
+        running_loss = 0.0
+        total_samples = 0
 
-# === Training Loop ===
-losses = []
-train_loss = []
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
 
-for epoch in range(EPOCHS):
-    model.train()
-    running_loss = 0
-    for batch in full_loader:
-        images, labels = batch
-        images = images.to(device)
-        labels = labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+            batch_size = labels.size(0)
+            running_loss += loss.item()
+            total_samples += batch_size
 
-        running_loss += loss.item()
+        avg_loss = running_loss / total_samples  # Normalize by total number of samples
+        print(f"{name} Epoch {epoch + 1}/{EPOCHS}, Loss: {avg_loss:.4f}")
+        losses.append(avg_loss)
 
-    avg_loss = running_loss / len(full_loader)
-    print(f"Epoch {epoch + 1}/{EPOCHS}, Loss: {avg_loss:.4f}")
-    losses.append(avg_loss)
+    return losses
 
 
-plt.figure(figsize=(6, 4))
-plt.plot(train_loss, label="Full dataset")
-# plt.plot(loss_small, label="100 examples")
-plt.title("Classification Training Loss")
+# === Added: Train two models ===
+model_full = Classifier(latent_dim, base_channels)
+model_100 = Classifier(latent_dim, base_channels)
+
+losses_full = train_classifier(model_full, loader_full, name="Full")
+losses_100 = train_classifier(model_100, loader_100, name=f"{NUM_SAMPLES}-sample")
+
+# === Plot both losses ===
+plt.figure(figsize=(8, 5))
+plt.plot(losses_full, label="Full dataset")
+plt.plot(losses_100, label=f"{NUM_SAMPLES} examples")
+plt.title("Training Loss Comparison")
 plt.xlabel("Epoch")
 plt.ylabel("Cross-Entropy Loss")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.show()
-#
-# # === Visualization of reconstructions ===
-# # Set the model to evaluation mode
-# model.eval()
-#
-# # Get a batch of test images
-# test_images, _ = next(iter(full_loader))
-# test_images = test_images.to(device)
-# with torch.no_grad():
-#     reconstructed = model(test_images)
-#
-# # Convert tensors to numpy arrays for visualization
-# test_images = test_images.cpu().numpy()
-# reconstructed = reconstructed.cpu().numpy()
-#
-# # Plot original and reconstructed images side-by-side
-# n = 5  # number of images to show
-# plt.figure(figsize=(20, 4))
-# for i in range(n):
-#     # Original
-#     ax = plt.subplot(2, n, i + 1)
-#     plt.imshow(test_images[i].squeeze(), cmap='gray')
-#     ax.axis("off")
-#     if i == 0:
-#         ax.set_title("Original", fontsize=14)
-#
-#     # Reconstructed
-#     ax = plt.subplot(2, n, i + 1 + n)
-#     plt.imshow(reconstructed[i].squeeze(), cmap='gray')
-#     ax.axis("off")
-#     if i == 0:
-#         ax.set_title("Reconstructed", fontsize=14)
-#
-# plt.tight_layout()
-# plt.show()
-#
-# plt.figure(figsize=(6, 4))
-# plt.plot(range(1, EPOCHS + 1), losses, marker='o')
-# plt.title("Autoencoder Training Loss")
-# plt.xlabel("Epoch")
-# plt.ylabel("L1 Loss")
-# plt.grid(True)
-# plt.tight_layout()
-# plt.show()
+
+# === Visualize Sample Predictions ===
+model_full.eval()
+test_images, test_labels = next(iter(loader_full))  # Get a batch
+test_images = test_images.to(device)
+
+# Run inference
+with torch.no_grad():
+    logits = model_full(test_images)
+    predictions = torch.argmax(logits, dim=1)
+
+# Move data to CPU for visualization
+test_images = test_images.cpu().numpy()
+predictions = predictions.cpu().numpy()
+test_labels = test_labels.numpy()
+
+# Show N sample predictions
+n = 20
+plt.figure(figsize=(15, 3))
+for i in range(n):
+    ax = plt.subplot(1, n, i + 1)
+    plt.imshow(test_images[i].squeeze(), cmap="gray")
+    pred_label = predictions[i]
+    true_label = test_labels[i]
+    ax.set_title(f"Pred: {pred_label}\nTrue: {true_label}",
+                 color=("green" if pred_label == true_label else "red"))
+    ax.axis("off")
+plt.tight_layout()
+plt.show()
