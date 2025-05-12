@@ -33,6 +33,12 @@ train_loader = datasets.MNIST(root='./data', train=True, download=True,
 #                                                    batch_size=BATCH_SIZE,
 #                                                    shuffle=True, num_workers=0)
 
+# === Preprocessing Functions ===
+def encode_label(label):
+    one_hot = np.zeros((1, 10), dtype=np.float32)
+    one_hot[0, label] = 1.0
+    return one_hot.flatten()
+
 
 # === AutoEncoder Components ===
 class Encoder(nn.Module):
@@ -50,8 +56,6 @@ class Encoder(nn.Module):
         )
         self.model = nn.Sequential(
             nn.Linear((base_channels * 2) * 7 * 7, latent_dim),
-            nn.Dropout(0.3),
-            nn.Linear(latent_dim, latent_dim),
             nn.Dropout(0.3),
             nn.Linear(latent_dim, latent_dim),
             nn.Sigmoid()
@@ -81,17 +85,29 @@ class Decoder(nn.Module):
             # 14x14 -> 28x28
             nn.Sigmoid()  # Normalized the output [0,1]
         )
-        self.model = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim),
-            nn.Dropout(0.3),
-            nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
-            nn.Sigmoid()
-        )
+        # self.model = nn.Sequential(
+        #     nn.Linear(latent_dim, latent_dim),
+        #     nn.Dropout(0.3),
+        #     nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
+        #     nn.Sigmoid()
+        # )
 
     def forward(self, x):
         x = self.model(x)
         x = self.deconv(x)
         return x
+
+
+class Classifier(nn.Module):
+    def __init__(self, latent_dim=16, base_channels=4):
+        super().__init__()
+        self.encoder = Encoder(latent_dim, base_channels)
+        self.classifier = nn.Linear(latent_dim, 10)  # MLP layer
+
+    def forward(self, x):
+        z = self.encoder(x)
+        out = self.classifier(z)
+        return out
 
 
 class Autoencoder(nn.Module):
@@ -111,10 +127,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_dim = 16  # You can change to 4 or other values
 base_channels = 4  # Or 16 for larger model
 
-model = Autoencoder(latent_dim=latent_dim, base_channels=base_channels).to(
-    device)
+model = Classifier(latent_dim, base_channels)
+
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-criterion = nn.L1Loss()
+criterion = nn.CrossEntropyLoss()
 
 # Use full MNIST here instead of subset
 full_loader = torch.utils.data.DataLoader(train_loader, batch_size=BATCH_SIZE,
@@ -122,66 +138,80 @@ full_loader = torch.utils.data.DataLoader(train_loader, batch_size=BATCH_SIZE,
 
 # === Training Loop ===
 losses = []
+train_loss = []
 
 for epoch in range(EPOCHS):
     model.train()
-    epoch_loss = 0
+    running_loss = 0
     for batch in full_loader:
-        images, _ = batch
+        images, labels = batch
         images = images.to(device)
+        labels = labels.to(device)
 
         optimizer.zero_grad()
         outputs = model(images)
-        loss = criterion(outputs, images)
+        loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
-        epoch_loss += loss.item()
+        running_loss += loss.item()
 
-    avg_loss = epoch_loss / len(full_loader)
+    avg_loss = running_loss / len(full_loader)
     print(f"Epoch {epoch + 1}/{EPOCHS}, Loss: {avg_loss:.4f}")
     losses.append(avg_loss)
 
-# === Visualization of reconstructions ===
-# Set the model to evaluation mode
-model.eval()
-
-# Get a batch of test images
-test_images, _ = next(iter(full_loader))
-test_images = test_images.to(device)
-with torch.no_grad():
-    reconstructed = model(test_images)
-
-# Convert tensors to numpy arrays for visualization
-test_images = test_images.cpu().numpy()
-reconstructed = reconstructed.cpu().numpy()
-
-# Plot original and reconstructed images side-by-side
-n = 5  # number of images to show
-plt.figure(figsize=(20, 4))
-for i in range(n):
-    # Original
-    ax = plt.subplot(2, n, i + 1)
-    plt.imshow(test_images[i].squeeze(), cmap='gray')
-    ax.axis("off")
-    if i == 0:
-        ax.set_title("Original", fontsize=14)
-
-    # Reconstructed
-    ax = plt.subplot(2, n, i + 1 + n)
-    plt.imshow(reconstructed[i].squeeze(), cmap='gray')
-    ax.axis("off")
-    if i == 0:
-        ax.set_title("Reconstructed", fontsize=14)
-
-plt.tight_layout()
-plt.show()
 
 plt.figure(figsize=(6, 4))
-plt.plot(range(1, EPOCHS + 1), losses, marker='o')
-plt.title("Autoencoder Training Loss")
+plt.plot(train_loss, label="Full dataset")
+# plt.plot(loss_small, label="100 examples")
+plt.title("Classification Training Loss")
 plt.xlabel("Epoch")
-plt.ylabel("L1 Loss")
+plt.ylabel("Cross-Entropy Loss")
+plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+#
+# # === Visualization of reconstructions ===
+# # Set the model to evaluation mode
+# model.eval()
+#
+# # Get a batch of test images
+# test_images, _ = next(iter(full_loader))
+# test_images = test_images.to(device)
+# with torch.no_grad():
+#     reconstructed = model(test_images)
+#
+# # Convert tensors to numpy arrays for visualization
+# test_images = test_images.cpu().numpy()
+# reconstructed = reconstructed.cpu().numpy()
+#
+# # Plot original and reconstructed images side-by-side
+# n = 5  # number of images to show
+# plt.figure(figsize=(20, 4))
+# for i in range(n):
+#     # Original
+#     ax = plt.subplot(2, n, i + 1)
+#     plt.imshow(test_images[i].squeeze(), cmap='gray')
+#     ax.axis("off")
+#     if i == 0:
+#         ax.set_title("Original", fontsize=14)
+#
+#     # Reconstructed
+#     ax = plt.subplot(2, n, i + 1 + n)
+#     plt.imshow(reconstructed[i].squeeze(), cmap='gray')
+#     ax.axis("off")
+#     if i == 0:
+#         ax.set_title("Reconstructed", fontsize=14)
+#
+# plt.tight_layout()
+# plt.show()
+#
+# plt.figure(figsize=(6, 4))
+# plt.plot(range(1, EPOCHS + 1), losses, marker='o')
+# plt.title("Autoencoder Training Loss")
+# plt.xlabel("Epoch")
+# plt.ylabel("L1 Loss")
+# plt.grid(True)
+# plt.tight_layout()
+# plt.show()
