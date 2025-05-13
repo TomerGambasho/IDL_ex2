@@ -1,12 +1,9 @@
 # === Imports ===
-import os
 import numpy as np
 from torch import optim
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
-import seaborn as sns
 import torch
 from torchvision import datasets, transforms
 from torch.utils import data as data_utils
@@ -17,12 +14,11 @@ EPOCHS = 20
 KERNEL_SIZE = 3
 STRIDE = 2
 NUM_SAMPLES = 100
-MINIMAL_SIZE_AFTER_CNN = 7
 
 # Load the MNIST dataset
 transform = transforms.Compose([transforms.ToTensor()])
-mnist_dataset = datasets.MNIST(root='./data', train=True, download=True,
-                               transform=transform)
+mnist_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+mnist_dataset_test = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
 # === Subsample for the 100-sample case ===
 subset_indices = torch.randperm(len(mnist_dataset))[:NUM_SAMPLES]
@@ -30,23 +26,17 @@ subset_dataset = data_utils.Subset(mnist_dataset, subset_indices)
 
 
 # === Train/Test Split Functions ===
-def split_dataset(dataset):
+def full_dataset_loader(dataset, batch_size=BATCH_SIZE):
     X = [data[0].numpy() for data in dataset]
     y = [data[1] for data in dataset]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2,
-                                                        stratify=y)
-
-    def to_tensor_loader(X, y):
-        tensor_X = torch.tensor(np.stack(X)).float()
-        tensor_y = torch.tensor(y).long()
-        ds = data_utils.TensorDataset(tensor_X, tensor_y)
-        return data_utils.DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True)
-
-    return to_tensor_loader(X_train, y_train), to_tensor_loader(X_test, y_test)
+    tensor_X = torch.tensor(np.stack(X)).float()
+    tensor_y = torch.tensor(y).long()
+    ds = data_utils.TensorDataset(tensor_X, tensor_y)
+    return data_utils.DataLoader(ds, batch_size=batch_size, shuffle=True)
 
 
 # Full dataset: standard train/test split
-train_loader_full, test_loader_full = split_dataset(mnist_dataset)
+train_loader_full = full_dataset_loader(mnist_dataset)
 
 
 # Use all 100 samples for training
@@ -58,29 +48,42 @@ def dataset_to_loader(dataset, batch_size=BATCH_SIZE):
     ds = data_utils.TensorDataset(tensor_X, tensor_y)
     return data_utils.DataLoader(ds, batch_size=batch_size, shuffle=True)
 
+
 train_loader_100 = dataset_to_loader(subset_dataset)
 
-# Use part of the full dataset as a test set for evaluating both models
-_, test_loader_100 = split_dataset(mnist_dataset)
+
+def test_dataset_loader(dataset, batch_size=BATCH_SIZE):
+    X = [data[0].numpy() for data in dataset]
+    y = [data[1] for data in dataset]
+    tensor_X = torch.tensor(np.stack(X)).float()
+    tensor_y = torch.tensor(y).long()
+    ds = data_utils.TensorDataset(tensor_X, tensor_y)
+    return data_utils.DataLoader(ds, batch_size=batch_size, shuffle=False)
+
+
+test_loader_common = test_dataset_loader(mnist_dataset_test)  # Common test set
+test_loader_common = data_utils.DataLoader(
+    test_loader_common.dataset,
+    batch_size=10,
+    sampler=torch.utils.data.RandomSampler(test_loader_common.dataset)
+)
+
 
 # === AutoEncoder Components ===
 class Encoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(1, base_channels, kernel_size=KERNEL_SIZE, stride=STRIDE,
-                      padding=1),
+            nn.Conv2d(1, base_channels, kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
             nn.ReLU(),
-            nn.Conv2d(base_channels, base_channels * 2,
-                      kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
+            nn.Conv2d(base_channels, base_channels * 2, kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
             nn.ReLU(),
             nn.Flatten()
         )
         self.model = nn.Sequential(
-            nn.Linear((base_channels * 2) *
-                      MINIMAL_SIZE_AFTER_CNN * MINIMAL_SIZE_AFTER_CNN,
-                      latent_dim),
-            nn.Dropout(0.3),
+            nn.Linear((base_channels * 2) * 7 * 7, min((base_channels * 2) * 7 * 7, 2 * latent_dim)),
+            nn.Linear(2 * latent_dim, latent_dim),
+            # nn.Dropout(0.3),
             nn.Linear(latent_dim, latent_dim),
             nn.Sigmoid()
         )
@@ -95,15 +98,12 @@ class Decoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(latent_dim, (base_channels * 2) *
-                      MINIMAL_SIZE_AFTER_CNN * MINIMAL_SIZE_AFTER_CNN),
+            nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
             nn.ReLU()
         )
         self.deconv = nn.Sequential(
-            nn.Unflatten(1, (base_channels * 2,
-                             MINIMAL_SIZE_AFTER_CNN, MINIMAL_SIZE_AFTER_CNN)),
-            nn.ConvTranspose2d(base_channels * 2, base_channels,
-                               kernel_size=KERNEL_SIZE,
+            nn.Unflatten(1, (base_channels * 2, 7, 7)),
+            nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=KERNEL_SIZE,
                                stride=STRIDE, padding=1, output_padding=1),
             nn.ReLU(),
             nn.ConvTranspose2d(base_channels, 1, kernel_size=KERNEL_SIZE,
@@ -144,17 +144,24 @@ class Autoencoder(nn.Module):
 # === Training Setup ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_dim = 16
-base_channels = 4
+base_channels = 16
 
 
 # === Training function ===
-def train_classifier(model, train_loader, test_loader, name=""):
+def train_classifier(model, train_loader, test_loader, name="", visualize=False, n_vis=10):
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss(reduction='sum')
     model.to(device)
 
     train_losses, test_losses = [], []
     train_accs, test_accs = [], []
+
+    # Preload a batch of test samples for consistent visualization
+    if visualize:
+        vis_images, vis_labels = next(iter(test_loader))
+        vis_images = vis_images.to(device)
+        vis_labels = vis_labels.to(device)
+
 
     for epoch in range(EPOCHS):
         model.train()
@@ -193,9 +200,33 @@ def train_classifier(model, train_loader, test_loader, name=""):
         test_losses.append(avg_test_loss)
         test_accs.append(test_accuracy)
 
-        print(
-            f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
-            f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
+        print(f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
+              f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
+
+        # === Visualize Predictions ===
+        if visualize:
+            vis_images, vis_labels = next(iter(test_loader))  # Random batch
+            vis_images = vis_images.to(device)
+            vis_labels = vis_labels.to(device)
+
+            with torch.no_grad():
+                outputs = model(vis_images)
+                preds = torch.argmax(outputs, dim=1)
+
+            plt.figure(figsize=(n_vis * 2, 2.5))
+            for i in range(n_vis):
+                ax = plt.subplot(1, n_vis, i + 1)
+                img = vis_images[i].cpu().squeeze().numpy()
+                pred = preds[i].item()
+                true = vis_labels[i].item()
+                plt.imshow(img, cmap="gray")
+                ax.set_title(f"Pred: {pred}\nTrue: {true}",
+                             color="green" if pred == true else "red")
+                ax.axis("off")
+            plt.suptitle(f"{name} Predictions - Epoch {epoch + 1}")
+            plt.tight_layout()
+            plt.show()
+
 
     return train_losses, test_losses, train_accs, test_accs
 
@@ -205,10 +236,10 @@ model_full = Classifier(latent_dim, base_channels)
 model_100 = Classifier(latent_dim, base_channels)
 
 train_loss_full, test_loss_full, acc_train_full, acc_test_full = train_classifier(
-    model_full, train_loader_full, test_loader_full, name="Full")
+    model_full, train_loader_full, test_loader_common, name="Full", visualize=True)
 
 train_loss_100, test_loss_100, acc_train_100, acc_test_100 = train_classifier(
-    model_100, train_loader_100, test_loader_100, name="Subset")
+    model_100, train_loader_100, test_loader_common, name="Subset", visualize=True)
 
 # === Final Accuracies ===
 final_acc_full = acc_test_full[-1]
@@ -220,8 +251,7 @@ plt.plot(train_loss_full, label="Train Full")
 plt.plot(test_loss_full, label="Test Full")
 plt.plot(train_loss_100, label="Train 100")
 plt.plot(test_loss_100, label="Test 100")
-plt.title(
-    f"Loss over Epochs\nFinal Test Acc - Full: {final_acc_full:.2%}, Subset: {final_acc_100:.2%}")
+plt.title(f"Loss over Epochs\nFinal Test Acc - Full: {final_acc_full:.2%}, Subset: {final_acc_100:.2%}")
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
 plt.legend()
@@ -257,5 +287,3 @@ plt.show()
 #     ax.axis("off")
 # plt.tight_layout()
 # plt.show()
-#
-#
