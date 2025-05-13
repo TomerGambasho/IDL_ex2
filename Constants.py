@@ -1,0 +1,9 @@
+# === Constants and Mappings ===
+BATCH_SIZE = 32
+EPOCHS = 20
+KERNEL_SIZE = 3
+STRIDE = 2
+NUM_SAMPLES = 100
+VISUALIZE = True
+N_VIS = 10
+MINIMAL_SIZE_AFTER_CNN = 7
