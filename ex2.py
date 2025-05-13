@@ -17,29 +17,37 @@ EPOCHS = 20
 KERNEL_SIZE = 3
 STRIDE = 2
 NUM_SAMPLES = 100
+MINIMAL_SIZE_AFTER_CNN = 7
 
 # Load the MNIST dataset
 transform = transforms.Compose([transforms.ToTensor()])
-mnist_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+mnist_dataset = datasets.MNIST(root='./data', train=True, download=True,
+                               transform=transform)
 
 # === Subsample for the 100-sample case ===
 subset_indices = torch.randperm(len(mnist_dataset))[:NUM_SAMPLES]
 subset_dataset = data_utils.Subset(mnist_dataset, subset_indices)
 
+
 # === Train/Test Split Functions ===
 def split_dataset(dataset):
     X = [data[0].numpy() for data in dataset]
     y = [data[1] for data in dataset]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2,
+                                                        stratify=y)
+
     def to_tensor_loader(X, y):
         tensor_X = torch.tensor(np.stack(X)).float()
         tensor_y = torch.tensor(y).long()
         ds = data_utils.TensorDataset(tensor_X, tensor_y)
         return data_utils.DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True)
+
     return to_tensor_loader(X_train, y_train), to_tensor_loader(X_test, y_test)
+
 
 # Full dataset: standard train/test split
 train_loader_full, test_loader_full = split_dataset(mnist_dataset)
+
 
 # Use all 100 samples for training
 def dataset_to_loader(dataset, batch_size=BATCH_SIZE):
@@ -60,58 +68,84 @@ class Encoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(1, base_channels, kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
+            nn.Conv2d(1, base_channels, kernel_size=KERNEL_SIZE, stride=STRIDE,
+                      padding=1),
             nn.ReLU(),
-            nn.Conv2d(base_channels, base_channels * 2, kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
+            nn.Conv2d(base_channels, base_channels * 2,
+                      kernel_size=KERNEL_SIZE, stride=STRIDE, padding=1),
             nn.ReLU(),
             nn.Flatten()
         )
         self.model = nn.Sequential(
-            nn.Linear((base_channels * 2) * 7 * 7, latent_dim),
+            nn.Linear((base_channels * 2) *
+                      MINIMAL_SIZE_AFTER_CNN * MINIMAL_SIZE_AFTER_CNN,
+                      latent_dim),
             nn.Dropout(0.3),
             nn.Linear(latent_dim, latent_dim),
             nn.Sigmoid()
         )
+
     def forward(self, x):
         x = self.conv(x)
         x = self.model(x)
         return x
 
+
 class Decoder(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(latent_dim, (base_channels * 2) * 7 * 7),
+            nn.Linear(latent_dim, (base_channels * 2) *
+                      MINIMAL_SIZE_AFTER_CNN * MINIMAL_SIZE_AFTER_CNN),
             nn.ReLU()
         )
         self.deconv = nn.Sequential(
-            nn.Unflatten(1, (base_channels * 2, 7, 7)),
-            nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=KERNEL_SIZE,
+            nn.Unflatten(1, (base_channels * 2,
+                             MINIMAL_SIZE_AFTER_CNN, MINIMAL_SIZE_AFTER_CNN)),
+            nn.ConvTranspose2d(base_channels * 2, base_channels,
+                               kernel_size=KERNEL_SIZE,
                                stride=STRIDE, padding=1, output_padding=1),
             nn.ReLU(),
             nn.ConvTranspose2d(base_channels, 1, kernel_size=KERNEL_SIZE,
                                stride=STRIDE, padding=1, output_padding=1),
             nn.Sigmoid()
         )
+
     def forward(self, x):
         x = self.model(x)
         x = self.deconv(x)
         return x
+
 
 class Classifier(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.encoder = Encoder(latent_dim, base_channels)
         self.classifier = nn.Linear(latent_dim, 10)
+
     def forward(self, x):
         z = self.encoder(x)
         out = self.classifier(z)
         return out
 
+
+class Autoencoder(nn.Module):
+    def __init__(self, latent_dim=16, base_channels=4):
+        super().__init__()
+        self.encoder = Encoder(latent_dim, base_channels)
+        self.decoder = Decoder(latent_dim, base_channels)
+
+    def forward(self, x):
+        z = self.encoder(x)
+        out = self.decoder(z)
+        return out
+
+
 # === Training Setup ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_dim = 16
 base_channels = 4
+
 
 # === Training function ===
 def train_classifier(model, train_loader, test_loader, name=""):
@@ -159,10 +193,12 @@ def train_classifier(model, train_loader, test_loader, name=""):
         test_losses.append(avg_test_loss)
         test_accs.append(test_accuracy)
 
-        print(f"{name} Epoch {epoch+1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
-              f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
+        print(
+            f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
+            f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
 
     return train_losses, test_losses, train_accs, test_accs
+
 
 # === Train models ===
 model_full = Classifier(latent_dim, base_channels)
@@ -184,7 +220,8 @@ plt.plot(train_loss_full, label="Train Full")
 plt.plot(test_loss_full, label="Test Full")
 plt.plot(train_loss_100, label="Train 100")
 plt.plot(test_loss_100, label="Test 100")
-plt.title(f"Loss over Epochs\nFinal Test Acc - Full: {final_acc_full:.2%}, Subset: {final_acc_100:.2%}")
+plt.title(
+    f"Loss over Epochs\nFinal Test Acc - Full: {final_acc_full:.2%}, Subset: {final_acc_100:.2%}")
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
 plt.legend()
