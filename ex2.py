@@ -14,6 +14,8 @@ EPOCHS = 20
 KERNEL_SIZE = 3
 STRIDE = 2
 NUM_SAMPLES = 100
+VISUALIZE = False
+N_VIS = 10
 
 # Load the MNIST dataset
 transform = transforms.Compose([transforms.ToTensor()])
@@ -80,17 +82,9 @@ class Encoder(nn.Module):
             nn.ReLU(),
             nn.Flatten()
         )
-        self.model = nn.Sequential(
-            nn.Linear((base_channels * 2) * 7 * 7, min((base_channels * 2) * 7 * 7, 2 * latent_dim)),
-            nn.Linear(2 * latent_dim, latent_dim),
-            # nn.Dropout(0.3),
-            nn.Linear(latent_dim, latent_dim),
-            nn.Sigmoid()
-        )
 
     def forward(self, x):
         x = self.conv(x)
-        x = self.model(x)
         return x
 
 
@@ -117,15 +111,34 @@ class Decoder(nn.Module):
         return x
 
 
+class MLP(nn.Module):
+    def __init__(self, latent_dim=16, base_channels=4):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Linear((base_channels * 2) * 7 * 7, min((base_channels * 2) * 7 * 7, 2 * latent_dim)),
+            nn.Linear(2 * latent_dim, latent_dim),
+            # nn.Dropout(0.3),
+            nn.Linear(latent_dim, latent_dim),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.model(x)
+        return x
+
+
 class Classifier(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.encoder = Encoder(latent_dim, base_channels)
+        self.encoder.trainable = False  # Freeze encoder
+        self.mlp = MLP(latent_dim, base_channels)
         self.classifier = nn.Linear(latent_dim, 10)
 
     def forward(self, x):
-        z = self.encoder(x)
-        out = self.classifier(z)
+        x2 = self.encoder(x)
+        x3 = self.mlp(x2)
+        out = self.classifier(x3)
         return out
 
 
@@ -148,7 +161,7 @@ base_channels = 16
 
 
 # === Training function ===
-def train_classifier(model, train_loader, test_loader, name="", visualize=False, n_vis=10):
+def train_classifier(model, train_loader, test_loader, name="", visualize=VISUALIZE, n_vis=N_VIS):
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss(reduction='sum')
     model.to(device)
@@ -236,10 +249,10 @@ model_full = Classifier(latent_dim, base_channels)
 model_100 = Classifier(latent_dim, base_channels)
 
 train_loss_full, test_loss_full, acc_train_full, acc_test_full = train_classifier(
-    model_full, train_loader_full, test_loader_common, name="Full", visualize=True)
+    model_full, train_loader_full, test_loader_common, name="Full")
 
 train_loss_100, test_loss_100, acc_train_100, acc_test_100 = train_classifier(
-    model_100, train_loader_100, test_loader_common, name="Subset", visualize=True)
+    model_100, train_loader_100, test_loader_common, name="Subset")
 
 # === Final Accuracies ===
 final_acc_full = acc_test_full[-1]
