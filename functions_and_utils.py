@@ -44,7 +44,8 @@ def test_dataset_loader(dataset, batch_size=BATCH_SIZE):
     return data_utils.DataLoader(ds, batch_size=batch_size, shuffle=False)
 
 
-def train_classifier_recognize_the_num(model, train_loader, test_loader, name="", visualize=False, n_vis=10):
+def train_classifier_recognize_the_num(model, train_loader, test_loader,
+                                       name="", visualize=False, n_vis=10):
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss(reduction='sum')
     model.to(device)
@@ -57,7 +58,6 @@ def train_classifier_recognize_the_num(model, train_loader, test_loader, name=""
         vis_images, vis_labels = next(iter(test_loader))
         vis_images = vis_images.to(device)
         vis_labels = vis_labels.to(device)
-
 
     for epoch in range(EPOCHS):
         model.train()
@@ -72,10 +72,9 @@ def train_classifier_recognize_the_num(model, train_loader, test_loader, name=""
             train_loss += loss.item()
             _, predicted = torch.max(outputs, 1)
             correct += (predicted == labels).sum().item()
-            total += labels.size(0)
 
-        avg_train_loss = train_loss / total
-        train_accuracy = correct / total
+        avg_train_loss = train_loss / len(train_loader)
+        train_accuracy = correct / len(train_loader)
         train_losses.append(avg_train_loss)
         train_accs.append(train_accuracy)
 
@@ -89,15 +88,15 @@ def train_classifier_recognize_the_num(model, train_loader, test_loader, name=""
                 test_loss += loss.item()
                 _, predicted = torch.max(outputs, 1)
                 correct += (predicted == labels).sum().item()
-                total += labels.size(0)
 
-        avg_test_loss = test_loss / total
-        test_accuracy = correct / total
+        avg_test_loss = test_loss / len(test_loader)
+        test_accuracy = correct / len(test_loader)
         test_losses.append(avg_test_loss)
         test_accs.append(test_accuracy)
 
-        print(f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
-              f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
+        print(
+            f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
+            f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
 
         # === Visualize Predictions ===
         if visualize:
@@ -123,9 +122,7 @@ def train_classifier_recognize_the_num(model, train_loader, test_loader, name=""
             plt.tight_layout()
             plt.show()
 
-
     return train_losses, test_losses, train_accs, test_accs
-
 
 
 # === Training function ===
@@ -158,9 +155,8 @@ def train_classifier(model, train_loader, test_loader, name="",
 
             # _, predicted = torch.max(outputs, 1)
             # correct += (predicted == images).sum().item()
-            total += labels.size(0)
 
-        avg_train_loss = train_loss / total
+        avg_train_loss = train_loss / len(train_loader)
         # train_accuracy = correct / total
         train_losses.append(avg_train_loss)
         # train_accs.append(train_accuracy)
@@ -175,16 +171,10 @@ def train_classifier(model, train_loader, test_loader, name="",
                 test_loss += loss.item()
                 # _, predicted = torch.max(outputs, 1)
                 # correct += (predicted == labels).sum().item()
-                total += labels.size(0)
-        avg_test_loss = test_loss / total  # todo should be len(test_loader) and not total
-        # test_accuracy = correct / total
+        avg_test_loss = test_loss / len(test_loader)
         test_losses.append(avg_test_loss)
-        # test_accs.append(test_accuracy)
-
-        # print(f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
-        #       f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
         print(
-            f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
+            f"Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
             f"Test Loss: {avg_test_loss:.4f}.")
 
         # === Visualize Predictions ===
@@ -211,9 +201,12 @@ def train_classifier(model, train_loader, test_loader, name="",
                 ax.axis("off")
                 if i == 0:
                     ax.set_title("Reconstructed", fontsize=14)
-
+            save_dir = "part_4_results"
+            os.makedirs(save_dir, exist_ok=True)
             plt.tight_layout()
-            plt.show()
+            plt.savefig(os.path.join(save_dir,
+                                     f"reconstruction{epoch+1}.png"))  # Save the figure
+            plt.close()
 
     return train_losses, test_losses, train_accs, test_accs
 
@@ -248,7 +241,8 @@ def train_autoencoder(model, train_loader, test_loader,
 
             epoch_loss += loss.item()
 
-        train_avg_loss = epoch_loss / len(train_loader)
+        avg_train_loss = epoch_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
 
         model.eval()
         test_loss, correct, total = 0, 0, 0
@@ -270,7 +264,7 @@ def train_autoencoder(model, train_loader, test_loader,
         # print(f"{name} Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
         #       f"Test Loss: {avg_test_loss:.4f}, Train Acc: {train_accuracy:.2f}, Test Acc: {test_accuracy:.2f}")
         print(
-            f" Epoch {epoch + 1}/{EPOCHS} | Train Loss: {train_avg_loss:.4f}, "
+            f" Epoch {epoch + 1}/{EPOCHS} | Train Loss: {avg_train_loss:.4f}, "
             f"Test Loss: {avg_test_loss:.4f}.")
 
         # === Visualize Predictions ===

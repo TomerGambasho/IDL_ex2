@@ -16,11 +16,12 @@ class Encoder(nn.Module):
             nn.ReLU(),
             nn.Flatten()
         )
-        self.linear = nn.Linear((base_channels * 2) * 7 * 7, latent_dim)
+        self.linear = nn.Linear((base_channels * 2) * MINIMAL_SIZE_AFTER_CNN
+                                * MINIMAL_SIZE_AFTER_CNN, latent_dim)
 
     def forward(self, x):
         x = self.conv(x)
-        x = self.linear(x)
+        # x = self.linear(x)  # todo part 4
         return x
 
 
@@ -28,8 +29,10 @@ class MLP(nn.Module):
     def __init__(self, latent_dim=16, base_channels=4):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear((base_channels * 2) * 7 * 7,
-                      min((base_channels * 2) * 7 * 7, 2 * latent_dim)),
+            nn.Linear((base_channels * 2) *
+                      MINIMAL_SIZE_AFTER_CNN * MINIMAL_SIZE_AFTER_CNN,
+                      min((base_channels * 2) * MINIMAL_SIZE_AFTER_CNN *
+                          MINIMAL_SIZE_AFTER_CNN, 2 * latent_dim)),
             nn.Linear(2 * latent_dim, latent_dim),
             # nn.Dropout(0.3),
             nn.Linear(latent_dim, latent_dim),
@@ -60,7 +63,7 @@ class Decoder(nn.Module):
         )
 
     def forward(self, x):
-        x = self.linear(x)
+        x = self.linear(x) # todo part 4
         x = self.deconv(x)
         return x
 
@@ -78,10 +81,11 @@ class Autoencoder(nn.Module):
 
 
 class Classifier(nn.Module):
-    def __init__(self, latent_dim=16, base_channels=4):
+    def __init__(self, latent_dim=16, base_channels=4, is_freeze = False):
         super().__init__()
         self.encoder = Encoder(latent_dim, base_channels)
-        self.encoder.trainable = False  # Freeze encoder
+        if is_freeze:
+            self.encoder.trainable = False  # Freeze encoder- part 3
         self.mlp = MLP(latent_dim, base_channels)
         self.decoder = Decoder(latent_dim, base_channels)
 
