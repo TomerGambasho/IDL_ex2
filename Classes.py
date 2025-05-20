@@ -21,7 +21,7 @@ class Encoder(nn.Module):
 
     def forward(self, x):
         x = self.conv(x)
-        # x = self.linear(x)  # todo part 4
+        # x = self.linear(x)  # change for part 3 and 4
         return x
 
 
@@ -63,7 +63,7 @@ class Decoder(nn.Module):
         )
 
     def forward(self, x):
-        x = self.linear(x) # todo part 4
+        x = self.linear(x)  # change in part 3 and 4
         x = self.deconv(x)
         return x
 
